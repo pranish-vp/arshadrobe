@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Arshadrobe 👗✨
 
-## Getting Started
+**Your closet, styled by AI.** Catalog your wardrobe, ask for outfit ideas for any
+occasion, and see a photo of *you* wearing the look.
 
-First, run the development server:
+Installable PWA · works on phone & desktop · your photos never leave your device
+(except to the OpenAI API for tagging & try-on).
+
+## Quick start
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000 — the whole app works immediately in **demo mode**
+(manual tagging + rule-based stylist).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Enable the full AI (recommended)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Get an API key at https://platform.openai.com/api-keys
+2. Copy `.env.example` to `.env.local` and set `OPENAI_API_KEY=your-key`
+3. Restart the dev server
 
-## Learn More
+That unlocks:
+- **Auto-tagging** — snap a garment, `gpt-5-mini` fills in category/colors/season/formality
+- **AI stylist** — conversational outfit ideas built only from clothes you own
+- **Virtual try-on** — a photorealistic image of you wearing the outfit
+  (`gpt-image-1` with high input fidelity for accurate faces)
 
-To learn more about Next.js, take a look at the following resources:
+## How it works
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Piece | Tech |
+|---|---|
+| App | Next.js (App Router) + TypeScript + Tailwind v4, installable PWA |
+| Storage | **Neon Postgres** when `DATABASE_URL` is set (synced, survives resets); IndexedDB on-device otherwise. First cloud connect auto-migrates local data up. |
+| AI calls | Next.js API routes (`/api/tag`, `/api/stylist`, `/api/tryon`) → OpenAI — the key stays server-side |
+| Background removal | `@imgly/background-removal`, fully in-browser (free) |
+| Weather | Open-Meteo (free, no key) for weather-aware outfits |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Project map
 
-## Deploy on Vercel
+```
+src/
+  app/            pages: home, onboarding, wardrobe, stylist, lookbook, profile
+  app/api/        AI routes: tag, stylist, tryon, health
+  app/api/data/   DB routes: profile, garments, outfits, clear (Neon Postgres)
+  components/     AppShell (nav), AddGarmentSheet, GarmentCard, OutfitCollage, …
+  lib/            types, db facade (cloud/local), image utils, weather, fallback stylist
+  lib/server/     OpenAI REST client + Neon Postgres client (server-only)
+public/sw.js      service worker (offline shell)
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+See `SPEC.md` for the full product spec and roadmap.

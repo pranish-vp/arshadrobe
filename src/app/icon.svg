@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="116" fill="#b4634a"/>
+  <!-- hanger hook -->
+  <path d="M256 150 v-26 a30 30 0 1 1 30 -30" fill="none" stroke="#faf6f1" stroke-width="24" stroke-linecap="round"/>
+  <!-- hanger body -->
+  <path d="M256 150 L106 330 H406 Z" fill="none" stroke="#faf6f1" stroke-width="28" stroke-linejoin="round"/>
+  <!-- sparkle -->
+  <path d="M392 116 l10 26 26 10 -26 10 -10 26 -10 -26 -26 -10 26 -10 z" fill="#faf6f1"/>
+</svg>
