@@ -225,6 +225,7 @@ export default function StylistPage() {
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder='e.g. "I want to wear my white sneakers"'
+                maxLength={300}
                 className="w-full rounded-full border border-sand bg-surface px-5 py-3 text-sm shadow-soft outline-none focus:border-clay"
               />
             </Question>
@@ -508,6 +509,16 @@ function TryOnModal({
   const url = useObjectUrl(result);
 
   const generate = async () => {
+    // Pieces may have been deleted since this option was suggested.
+    const picked = option.garmentIds
+      .map((id) => garments.find((g) => g.id === id))
+      .filter(Boolean) as Garment[];
+    if (!picked.length) {
+      setError(
+        "The pieces in this look are no longer in your wardrobe — go back and restyle."
+      );
+      return;
+    }
     setGenerating(true);
     setError(null);
     setResult(null);
@@ -522,9 +533,6 @@ function TryOnModal({
       setProgress(Math.min(95, Math.round(100 * (1 - Math.exp(-t / 14)))));
     }, 300);
     try {
-      const picked = option.garmentIds
-        .map((id) => garments.find((g) => g.id === id))
-        .filter(Boolean) as Garment[];
       const personB64 = await blobToBase64(person);
       const garmentPayloads = await Promise.all(
         picked.map(async (g) => ({

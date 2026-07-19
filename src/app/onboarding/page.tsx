@@ -27,9 +27,10 @@ export default function OnboardingPage() {
   const photoUrl = useObjectUrl(photo);
 
   const finish = async () => {
+    if (!name.trim() || !photo || vibes.length === 0) return;
     setSaving(true);
     await saveProfile({
-      name: name.trim() || "there",
+      name: name.trim(),
       photo,
       vibes,
       onboarded: true,
@@ -85,15 +86,22 @@ export default function OnboardingPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="What should we call you?"
+              maxLength={40}
               className="mt-8 w-full rounded-full border border-sand bg-surface px-5 py-3.5 text-center text-sm shadow-soft outline-none focus:border-clay"
             />
             <button
               type="button"
+              disabled={name.trim().length < 2}
               onClick={() => setStep(1)}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-ink py-3.5 text-sm font-semibold text-cream transition-all hover:bg-black active:scale-[0.98]"
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-ink py-3.5 text-sm font-semibold text-cream transition-all enabled:hover:bg-black enabled:active:scale-[0.98] disabled:opacity-40"
             >
               Let&apos;s go <ArrowRight size={16} />
             </button>
+            {name.trim().length < 2 && (
+              <p className="mt-3 text-xs text-muted">
+                Tell us your name to continue
+              </p>
+            )}
           </div>
         )}
 
@@ -136,26 +144,24 @@ export default function OnboardingPage() {
                   </span>
                   <span className="text-sm font-semibold">Add your photo</span>
                   <span className="px-6 text-xs text-muted">
-                    Stays on your device
+                    Private — used only for your try-ons
                   </span>
                 </span>
               )}
             </button>
             <button
               type="button"
+              disabled={!photo}
               onClick={() => setStep(2)}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-ink py-3.5 text-sm font-semibold text-cream transition-all hover:bg-black active:scale-[0.98]"
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-ink py-3.5 text-sm font-semibold text-cream transition-all enabled:hover:bg-black enabled:active:scale-[0.98] disabled:opacity-40"
             >
-              {photo ? "Looking good" : "Continue"} <ArrowRight size={16} />
+              {photo ? "Looking good" : "Add your photo to continue"}{" "}
+              <ArrowRight size={16} />
             </button>
             {!photo && (
-              <button
-                type="button"
-                onClick={() => setStep(2)}
-                className="mt-3 text-xs font-medium text-muted underline-offset-2 hover:underline"
-              >
-                Skip for now — add it later in Profile
-              </button>
+              <p className="mt-3 text-xs text-muted">
+                Virtual try-on needs a photo of you — it only takes a second
+              </p>
             )}
           </div>
         )}
@@ -177,12 +183,15 @@ export default function OnboardingPage() {
             </div>
             <button
               type="button"
-              disabled={saving}
+              disabled={saving || vibes.length === 0}
               onClick={finish}
-              className="mt-8 flex w-full items-center justify-center gap-2 rounded-full bg-clay py-3.5 text-sm font-semibold text-white shadow-soft transition-all hover:bg-clay-deep active:scale-[0.98] disabled:opacity-50"
+              className="mt-8 flex w-full items-center justify-center gap-2 rounded-full bg-clay py-3.5 text-sm font-semibold text-white shadow-soft transition-all enabled:hover:bg-clay-deep enabled:active:scale-[0.98] disabled:opacity-40"
             >
               <Check size={16} /> Open my wardrobe
             </button>
+            {vibes.length === 0 && (
+              <p className="mt-3 text-xs text-muted">Pick at least one vibe</p>
+            )}
           </div>
         )}
       </div>

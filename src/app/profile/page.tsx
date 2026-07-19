@@ -29,9 +29,12 @@ export default function ProfilePage() {
       .catch(() => {});
   }, []);
 
+  const nameOk = Boolean(profile?.name.trim()) && profile?.name !== "there";
+  const vibesOk = (profile?.vibes.length ?? 0) > 0;
+
   const save = async () => {
-    if (!profile) return;
-    await saveProfile({ ...profile, onboarded: true });
+    if (!profile || !nameOk || !vibesOk) return;
+    await saveProfile({ ...profile, name: profile.name.trim(), onboarded: true });
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1600);
   };
@@ -114,11 +117,18 @@ export default function ProfilePage() {
         </div>
         <button
           type="button"
+          disabled={!nameOk || !vibesOk}
           onClick={save}
-          className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-ink py-3 text-sm font-semibold text-cream transition-all hover:bg-black active:scale-[0.98]"
+          className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-ink py-3 text-sm font-semibold text-cream transition-all enabled:hover:bg-black enabled:active:scale-[0.98] disabled:opacity-40"
         >
           {savedFlash ? <Check size={16} /> : null}
-          {savedFlash ? "Saved" : "Save profile"}
+          {savedFlash
+            ? "Saved"
+            : !nameOk
+              ? "Add your name to save"
+              : !vibesOk
+                ? "Pick at least one vibe"
+                : "Save profile"}
         </button>
       </section>
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { aiTryOnImage, NoKeyError, type InlineImage } from "@/lib/server/ai";
+import { str, validImageData } from "@/lib/server/validate";
 
 export const maxDuration = 120;
 
@@ -11,13 +12,25 @@ interface TryOnRequest {
 
 export async function POST(req: Request) {
   try {
-    const { person, garments, outfitTitle } = (await req.json()) as TryOnRequest;
-    if (!person?.data || !garments?.length) {
+    const body = (await req.json()) as TryOnRequest;
+    if (
+      !validImageData(body.person) ||
+      !Array.isArray(body.garments) ||
+      body.garments.length < 1 ||
+      body.garments.length > 8 ||
+      !body.garments.every(validImageData)
+    ) {
       return NextResponse.json(
-        { error: "missing person or garments" },
+        { error: "invalid person or garment images (1–8 required)" },
         { status: 400 }
       );
     }
+    const person = body.person;
+    const garments = body.garments.map((g) => ({
+      ...g,
+      label: str(g.label, 80, "garment"),
+    }));
+    const outfitTitle = str(body.outfitTitle, 80);
 
     const garmentList = garments.map((g, i) => `${i + 2}. ${g.label}`).join("\n");
     const prompt =

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { aiJSON, NoKeyError } from "@/lib/server/ai";
+import { validImageData } from "@/lib/server/validate";
 import type { GarmentTags } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -23,8 +24,11 @@ export async function POST(req: Request) {
     const { image } = (await req.json()) as {
       image: { data: string; mimeType: string };
     };
-    if (!image?.data) {
-      return NextResponse.json({ error: "missing image" }, { status: 400 });
+    if (!validImageData(image)) {
+      return NextResponse.json(
+        { error: "invalid or oversized image" },
+        { status: 400 }
+      );
     }
     const tags = await aiJSON<GarmentTags>({
       system: SYSTEM,

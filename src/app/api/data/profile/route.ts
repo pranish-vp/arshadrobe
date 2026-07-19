@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/server/auth";
 import { ensureSchema, getSql, NoDbError } from "@/lib/server/db";
 import { deleteImages, storeImage } from "@/lib/server/storage";
+import { str, strArray, validImage } from "@/lib/server/validate";
 import type { ProfileWire } from "@/lib/wire";
 
 export const maxDuration = 60;
@@ -48,7 +49,16 @@ export async function PUT(req: Request) {
     if (!userId) {
       return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
     }
-    const p = (await req.json()) as ProfileWire;
+    const raw = (await req.json()) as ProfileWire;
+    if (raw?.photo && !validImage(raw.photo)) {
+      return NextResponse.json({ error: "invalid photo" }, { status: 400 });
+    }
+    const p: ProfileWire = {
+      name: str(raw?.name, 40),
+      vibes: strArray(raw?.vibes, 12, 30),
+      onboarded: Boolean(raw?.onboarded),
+      ...(raw?.photo ? { photo: raw.photo } : {}),
+    };
     const sql = getSql();
     const prevRows = await sql`
       SELECT photo_url FROM profiles WHERE user_id = ${userId}`;

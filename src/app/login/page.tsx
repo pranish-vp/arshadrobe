@@ -15,6 +15,15 @@ export default function LoginPage() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Client-side pre-checks (the server enforces the same rules).
+    if (!/^[a-z0-9_]{3,30}$/i.test(username.trim())) {
+      setError("Username must be 3–30 letters, numbers or underscores.");
+      return;
+    }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -75,6 +84,10 @@ export default function LoginPage() {
               autoComplete="username"
               autoCapitalize="none"
               required
+              minLength={3}
+              maxLength={30}
+              pattern="[A-Za-z0-9_]+"
+              title="3–30 letters, numbers or underscores"
               className="w-full rounded-full border border-sand bg-cream px-4 py-2.5 text-sm outline-none focus:border-clay"
             />
           </label>
@@ -91,6 +104,7 @@ export default function LoginPage() {
               }
               required
               minLength={6}
+              maxLength={72}
               className="w-full rounded-full border border-sand bg-cream px-4 py-2.5 text-sm outline-none focus:border-clay"
             />
           </label>

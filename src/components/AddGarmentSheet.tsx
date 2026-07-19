@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { Camera, Check, Loader2, Sparkles, Trash2, X } from "lucide-react";
+import { useAlerts } from "./AlertProvider";
 import { putGarment, uid } from "@/lib/db";
 import { blobToBase64, resizeToJpeg, tryRemoveBackground } from "@/lib/images";
 import {
@@ -43,6 +44,7 @@ export default function AddGarmentSheet({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { toast } = useAlerts();
   const [items, setItems] = useState<DraftItem[]>([]);
   const [removeBg, setRemoveBg] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -127,7 +129,17 @@ export default function AddGarmentSheet({
 
   const onFiles = (files: FileList | null) => {
     if (!files?.length) return;
-    const drafts: DraftItem[] = Array.from(files).map((f) => ({
+    // Only images make it into the pipeline.
+    const all = Array.from(files);
+    const images = all.filter((f) => f.type.startsWith("image/"));
+    if (images.length < all.length) {
+      toast(
+        `Skipped ${all.length - images.length} file${all.length - images.length === 1 ? "" : "s"} — photos only.`,
+        "error"
+      );
+    }
+    if (!images.length) return;
+    const drafts: DraftItem[] = images.map((f) => ({
       id: uid(),
       original: f,
       previewUrl: URL.createObjectURL(f),

@@ -2,6 +2,14 @@ import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/server/auth";
 import { ensureSchema, getSql, NoDbError } from "@/lib/server/db";
 import { deleteImages, storeImage } from "@/lib/server/storage";
+import {
+  num,
+  oneOf,
+  str,
+  strArray,
+  validImage,
+} from "@/lib/server/validate";
+import { CATEGORIES, FORMALITIES, PATTERNS, SEASONS } from "@/lib/types";
 import type { GarmentWire } from "@/lib/wire";
 
 export const maxDuration = 60;
@@ -64,10 +72,30 @@ export async function PUT(req: Request) {
     if (!userId) {
       return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
     }
-    const g = (await req.json()) as GarmentWire;
-    if (!g?.id || (!g.image?.data && !g.image?.url)) {
+    const raw = (await req.json()) as GarmentWire;
+    if (!raw?.id || typeof raw.id !== "string" || !validImage(raw.image)) {
       return NextResponse.json({ error: "invalid garment" }, { status: 400 });
     }
+    // Sanitize every stored field — enums coerce to safe defaults.
+    const seasons = strArray(raw.seasons, 5, 10).filter((s) =>
+      (SEASONS as readonly string[]).includes(s)
+    );
+    const g: GarmentWire = {
+      id: str(raw.id, 60),
+      createdAt: num(raw.createdAt, Date.now()),
+      category: oneOf(raw.category, CATEGORIES, "other"),
+      subcategory: str(raw.subcategory, 40),
+      colors: strArray(raw.colors, 6, 24),
+      pattern: oneOf(raw.pattern, PATTERNS, "other"),
+      material: str(raw.material, 30),
+      seasons: (seasons.length ? seasons : ["all"]) as GarmentWire["seasons"],
+      formality: oneOf(raw.formality, FORMALITIES, "casual"),
+      description: str(raw.description, 300),
+      favorite: Boolean(raw.favorite),
+      wearCount: Math.max(0, num(raw.wearCount)),
+      image: raw.image,
+      ...(raw.cutout && validImage(raw.cutout) ? { cutout: raw.cutout } : {}),
+    };
     const sql = getSql();
     const prevRows = await sql`
       SELECT image_url, cutout_url FROM garments

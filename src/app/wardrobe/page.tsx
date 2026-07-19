@@ -239,7 +239,13 @@ function GarmentDetail({
   const url = useObjectUrl(draft.cutout ?? draft.image);
 
   const save = async () => {
-    await putGarment(draft);
+    await putGarment({
+      ...draft,
+      // Never save a nameless piece — fall back to its category.
+      subcategory: draft.subcategory.trim() || draft.category,
+      colors: draft.colors.map((c) => c.trim()).filter(Boolean),
+      seasons: draft.seasons.length ? draft.seasons : ["all"],
+    });
     onChanged();
   };
   const remove = async () => {

@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/server/auth";
 import { ensureSchema, getSql, NoDbError } from "@/lib/server/db";
 import { deleteImages, storeImage } from "@/lib/server/storage";
+import {
+  num,
+  numArray,
+  str,
+  strArray,
+  validImage,
+} from "@/lib/server/validate";
 import type { OutfitWire } from "@/lib/wire";
 
 export const maxDuration = 60;
@@ -61,10 +68,24 @@ export async function PUT(req: Request) {
     if (!userId) {
       return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
     }
-    const o = (await req.json()) as OutfitWire;
-    if (!o?.id || !o.garmentIds?.length) {
+    const raw = (await req.json()) as OutfitWire;
+    const garmentIds = strArray(raw?.garmentIds, 20, 60);
+    if (!raw?.id || typeof raw.id !== "string" || !garmentIds.length) {
       return NextResponse.json({ error: "invalid outfit" }, { status: 400 });
     }
+    const o: OutfitWire = {
+      id: str(raw.id, 60),
+      createdAt: num(raw.createdAt, Date.now()),
+      title: str(raw.title, 80, "Saved look"),
+      occasion: str(raw.occasion, 60),
+      vibe: str(raw.vibe, 60),
+      explanation: str(raw.explanation, 1200),
+      tip: str(raw.tip, 300) || undefined,
+      garmentIds,
+      favorite: Boolean(raw.favorite),
+      wornDates: numArray(raw.wornDates, 1000),
+      ...(raw.tryOn && validImage(raw.tryOn) ? { tryOn: raw.tryOn } : {}),
+    };
     const sql = getSql();
     const prevRows = await sql`
       SELECT tryon_url FROM outfits

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { aiJSON, NoKeyError } from "@/lib/server/ai";
+import { str } from "@/lib/server/validate";
 import type { OutfitOption, StylistContext } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -35,22 +36,29 @@ Return 3 options when the wardrobe allows it, otherwise as many complete outfits
 
 export async function POST(req: Request) {
   try {
-    const { garments, context } = (await req.json()) as {
+    const body = (await req.json()) as {
       garments: WardrobeItem[];
       context: StylistContext;
     };
-    if (!garments?.length) {
+    if (!Array.isArray(body.garments) || !body.garments.length) {
       return NextResponse.json({ error: "empty wardrobe" }, { status: 400 });
     }
+    // Clamp everything that flows into the prompt.
+    const garments = body.garments.slice(0, 300);
+    const occasion = str(body.context?.occasion, 60, "Casual day");
+    const vibe = str(body.context?.vibe, 60, "Comfy");
+    const weather = str(body.context?.weather, 80, "Mild");
+    const note = str(body.context?.note, 400);
+
     const result = await aiJSON<{ options: OutfitOption[] }>({
       system: SYSTEM,
       parts: [
         {
           text:
             `WARDROBE INVENTORY:\n${JSON.stringify(garments)}\n\n` +
-            `TODAY:\n- Occasion: ${context.occasion}\n- Vibe: ${context.vibe}\n` +
-            `- Weather: ${context.weather}\n` +
-            (context.note ? `- The user adds: ${context.note}\n` : "") +
+            `TODAY:\n- Occasion: ${occasion}\n- Vibe: ${vibe}\n` +
+            `- Weather: ${weather}\n` +
+            (note ? `- The user adds: ${note}\n` : "") +
             `\nStyle me. Respond with the JSON only.`,
         },
       ],
