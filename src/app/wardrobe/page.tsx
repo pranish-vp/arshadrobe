@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Heart, Plus, Search, Shirt, Trash2, X } from "lucide-react";
 import AddGarmentSheet from "@/components/AddGarmentSheet";
+import { useAlerts } from "@/components/AlertProvider";
 import EmptyState from "@/components/EmptyState";
 import GarmentCard from "@/components/GarmentCard";
 import { deleteGarment, listGarments, putGarment } from "@/lib/db";
@@ -17,6 +18,7 @@ import {
 } from "@/lib/types";
 
 export default function WardrobePage() {
+  const { toast } = useAlerts();
   const [garments, setGarments] = useState<Garment[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -54,9 +56,14 @@ export default function WardrobePage() {
     return c;
   }, [garments]);
 
-  const toggleFavorite = async (g: Garment) => {
-    await putGarment({ ...g, favorite: !g.favorite });
-    refresh();
+  // Optimistic: flip instantly, sync in the background, roll back on failure.
+  const toggleFavorite = (g: Garment) => {
+    const updated = { ...g, favorite: !g.favorite };
+    setGarments((prev) => prev.map((x) => (x.id === g.id ? updated : x)));
+    putGarment(updated).catch(() => {
+      setGarments((prev) => prev.map((x) => (x.id === g.id ? g : x)));
+      toast("Couldn't update — try again.", "error");
+    });
   };
 
   return (
@@ -227,6 +234,7 @@ function GarmentDetail({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { confirm } = useAlerts();
   const [draft, setDraft] = useState<Garment>(garment);
   const url = useObjectUrl(draft.cutout ?? draft.image);
 
@@ -235,7 +243,13 @@ function GarmentDetail({
     onChanged();
   };
   const remove = async () => {
-    if (!confirm("Remove this piece from your wardrobe?")) return;
+    const ok = await confirm({
+      title: "Remove this piece?",
+      body: "It will disappear from your wardrobe and future outfit ideas.",
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!ok) return;
     await deleteGarment(garment.id);
     onChanged();
   };
@@ -361,7 +375,7 @@ function GarmentDetail({
             </Field>
           </div>
         </div>
-        <div className="flex gap-3 border-t border-sand px-5 py-4 pb-safe">
+        <div className="flex gap-3 border-t border-sand px-5 pt-4 pb-safe-4">
           <button
             type="button"
             onClick={remove}

@@ -1,24 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  Camera,
-  Check,
-  Database,
-  ShieldCheck,
-  Sparkles,
-  Trash2,
-} from "lucide-react";
+import { Camera, Check, LogOut } from "lucide-react";
 import { MultiChipGroup } from "@/components/Chips";
-import { clearAllData, getProfile, saveProfile } from "@/lib/db";
+import { getProfile, resetDataCaches, saveProfile } from "@/lib/db";
 import { useObjectUrl } from "@/lib/hooks";
 import { resizeToJpeg } from "@/lib/images";
 import { VIBE_OPTIONS, type Profile } from "@/lib/types";
 
 interface Health {
-  configured: boolean;
-  textModel: string;
-  imageModel: string;
   db: boolean;
 }
 
@@ -46,15 +36,10 @@ export default function ProfilePage() {
     setTimeout(() => setSavedFlash(false), 1600);
   };
 
-  const wipe = async () => {
-    if (
-      !confirm(
-        "Delete EVERYTHING — wardrobe, looks and profile? This can't be undone."
-      )
-    )
-      return;
-    await clearAllData();
-    location.href = "/onboarding";
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    resetDataCaches();
+    location.href = "/login";
   };
 
   if (!profile) return <div className="skeleton h-64 rounded-3xl" />;
@@ -137,105 +122,18 @@ export default function ProfilePage() {
         </button>
       </section>
 
-      {/* AI status */}
-      <section className="rounded-3xl border border-sand bg-surface p-5 shadow-soft">
-        <div className="flex items-center gap-3">
-          <span
-            className={`flex h-10 w-10 items-center justify-center rounded-xl ${
-              health?.configured ? "bg-sage-soft text-sage" : "bg-clay-soft text-clay"
-            }`}
-          >
-            <Sparkles size={18} />
-          </span>
-          <div>
-            <p className="text-sm font-semibold">
-              {health?.configured ? "AI stylist connected" : "Demo mode"}
-            </p>
-            <p className="text-xs text-muted">
-              {health?.configured
-                ? `${health.textModel} · try-on via ${health.imageModel}`
-                : "Auto-tagging, smart styling & try-on need an OpenAI API key"}
-            </p>
-          </div>
-        </div>
-        {!health?.configured && (
-          <div className="mt-4 rounded-xl bg-cream p-4 text-xs leading-6 text-ink/80">
-            <p className="font-semibold">Enable the full AI:</p>
-            <ol className="ml-4 mt-1 list-decimal space-y-1">
-              <li>
-                Get a key at{" "}
-                <span className="font-medium">platform.openai.com/api-keys</span>
-              </li>
-              <li>
-                Create <code className="font-semibold">.env.local</code> in the
-                project root with{" "}
-                <code className="font-semibold">OPENAI_API_KEY=your-key</code>
-              </li>
-              <li>Restart the dev server</li>
-            </ol>
-          </div>
-        )}
-      </section>
-
-      {/* Privacy + data */}
-      <section className="rounded-3xl border border-sand bg-surface p-5 shadow-soft">
-        <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sage-soft text-sage">
-            <ShieldCheck size={18} />
-          </span>
-          <div>
-            <p className="text-sm font-semibold">Private by design</p>
-            <p className="text-xs leading-5 text-muted">
-              {health?.db
-                ? "Your wardrobe lives in your own Neon Postgres database. Images are sent to OpenAI's API solely to tag pieces and generate try-ons."
-                : "Your photos and wardrobe are stored only on this device. Images are sent to OpenAI's API solely to tag pieces and generate try-ons."}
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 flex items-center gap-3 border-t border-sand pt-4">
-          <span
-            className={`flex h-10 w-10 items-center justify-center rounded-xl ${
-              health?.db ? "bg-sage-soft text-sage" : "bg-cream text-muted"
-            }`}
-          >
-            <Database size={18} />
-          </span>
-          <StorageInfo cloud={health?.db ?? false} />
-          <button
-            type="button"
-            onClick={wipe}
-            className="ml-auto flex items-center gap-1.5 rounded-full border border-clay/40 px-4 py-2 text-xs font-semibold text-clay-deep transition-colors hover:bg-clay-soft"
-          >
-            <Trash2 size={13} /> Erase all data
-          </button>
-        </div>
-      </section>
+      {health?.db && (
+        <button
+          type="button"
+          onClick={logout}
+          className="flex w-full items-center justify-center gap-2 rounded-full border border-sand bg-surface py-3 text-sm font-semibold text-muted shadow-soft transition-all hover:text-ink active:scale-[0.98]"
+        >
+          <LogOut size={16} /> Log out
+        </button>
+      )}
 
       <p className="pb-4 text-center text-xs text-muted">
         Arshadrobe · your closet, styled by AI
-      </p>
-    </div>
-  );
-}
-
-function StorageInfo({ cloud }: { cloud: boolean }) {
-  const [text, setText] = useState("Stored on this device");
-  useEffect(() => {
-    if (cloud) return;
-    navigator.storage?.estimate?.().then((e) => {
-      if (e.usage != null) {
-        const mb = e.usage / (1024 * 1024);
-        setText(`${mb < 1 ? mb.toFixed(2) : mb.toFixed(1)} MB on this device`);
-      }
-    });
-  }, [cloud]);
-  return (
-    <div>
-      <p className="text-sm font-semibold">
-        {cloud ? "Cloud database connected" : "Local storage"}
-      </p>
-      <p className="text-xs text-muted">
-        {cloud ? "Neon Postgres — synced across your devices" : text}
       </p>
     </div>
   );

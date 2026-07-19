@@ -1,7 +1,6 @@
 /**
- * Server-only Neon Postgres access. Images are stored inline as base64
- * text columns — simple, atomic with the row, and well within Neon's
- * free tier at personal-wardrobe scale.
+ * Server-only Neon Postgres access. Schema v2: per-user rows, images
+ * stored in Vercel Blob (Postgres keeps only the URLs).
  */
 import { neon } from "@neondatabase/serverless";
 
@@ -30,18 +29,46 @@ export function ensureSchema(): Promise<void> {
   if (!schemaReady) {
     schemaReady = (async () => {
       const sql = getSql();
+
+      // v1 (pre-auth, base64-in-DB) tables are incompatible — drop them.
+      // Only ever fires on a database created before accounts existed.
+      const legacy = (await sql`
+        SELECT 1 FROM information_schema.tables WHERE table_name = 'garments'
+          AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'garments' AND column_name = 'user_id'
+          )`) as unknown[];
+      if (legacy.length) {
+        await sql`DROP TABLE IF EXISTS garments`;
+        await sql`DROP TABLE IF EXISTS outfits`;
+      }
+      await sql`DROP TABLE IF EXISTS profile`; // v1 singular table
+
       await sql`
-        CREATE TABLE IF NOT EXISTS profile (
+        CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          created_at BIGINT NOT NULL
+        )`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS sessions (
+          token TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          expires_at BIGINT NOT NULL
+        )`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS profiles (
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
           name TEXT NOT NULL DEFAULT '',
           vibes JSONB NOT NULL DEFAULT '[]',
           onboarded BOOLEAN NOT NULL DEFAULT false,
-          photo_data TEXT,
-          photo_mime TEXT
+          photo_url TEXT
         )`;
       await sql`
         CREATE TABLE IF NOT EXISTS garments (
           id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
           created_at BIGINT NOT NULL,
           category TEXT NOT NULL,
           subcategory TEXT NOT NULL DEFAULT '',
@@ -53,14 +80,13 @@ export function ensureSchema(): Promise<void> {
           description TEXT NOT NULL DEFAULT '',
           favorite BOOLEAN NOT NULL DEFAULT false,
           wear_count INT NOT NULL DEFAULT 0,
-          image_data TEXT NOT NULL,
-          image_mime TEXT NOT NULL,
-          cutout_data TEXT,
-          cutout_mime TEXT
+          image_url TEXT NOT NULL,
+          cutout_url TEXT
         )`;
       await sql`
         CREATE TABLE IF NOT EXISTS outfits (
           id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
           created_at BIGINT NOT NULL,
           title TEXT NOT NULL,
           occasion TEXT NOT NULL DEFAULT '',
@@ -70,13 +96,13 @@ export function ensureSchema(): Promise<void> {
           garment_ids JSONB NOT NULL DEFAULT '[]',
           favorite BOOLEAN NOT NULL DEFAULT false,
           worn_dates JSONB NOT NULL DEFAULT '[]',
-          tryon_data TEXT,
-          tryon_mime TEXT
+          tryon_url TEXT
         )`;
+      await sql`CREATE INDEX IF NOT EXISTS garments_user_idx ON garments (user_id, created_at DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS outfits_user_idx ON outfits (user_id, created_at DESC)`;
     })();
-    // Allow a retry on transient failure instead of caching the rejection.
     schemaReady.catch(() => {
-      schemaReady = null;
+      schemaReady = null; // allow retry after transient failure
     });
   }
   return schemaReady;

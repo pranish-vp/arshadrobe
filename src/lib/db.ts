@@ -1,30 +1,45 @@
 /**
  * Data facade for Arshadrobe. Same API the whole app has always used —
- * but storage now auto-selects:
+ * but storage auto-selects:
  *
- *  - Neon Postgres (via /api/data/*) when DATABASE_URL is configured
- *  - On-device IndexedDB otherwise (offline/demo mode)
+ *  - Neon Postgres + hosted images (via /api/data/*) when DATABASE_URL is
+ *    configured — per-account, behind login.
+ *  - On-device IndexedDB otherwise (offline/demo mode, no account needed).
  *
- * On first contact with an EMPTY cloud database, any existing local data
- * is migrated up automatically so nothing is lost.
+ * After signing in to an account with an empty cloud wardrobe, any existing
+ * local data is migrated up automatically so nothing is lost.
  */
 import * as local from "./local-db";
 import { base64ToBlob, blobToBase64 } from "./images";
 import type { Garment, Outfit, Profile } from "./types";
-import type { GarmentWire, OutfitWire, ProfileWire } from "./wire";
+import type {
+  GarmentWire,
+  ImagePayload,
+  OutfitWire,
+  ProfileWire,
+} from "./wire";
 
 export { uid } from "./local-db";
 
 type Mode = "cloud" | "local";
 
-const MIGRATED_FLAG = "arshadrobe:migrated:v1";
-
 let modePromise: Promise<Mode> | null = null;
 
-// Session caches — image payloads are heavy, so avoid refetching per page.
+// Session caches — images are heavy, avoid refetching on every page.
 let profileCache: Profile | null | undefined;
 let garmentsCache: Garment[] | null = null;
 let outfitsCache: Outfit[] | null = null;
+
+// Remembers where a downloaded Blob is hosted, so unchanged images are
+// sent back as URLs (no re-upload on e.g. a favorite toggle).
+const hostedUrlOf = new WeakMap<Blob, string>();
+
+export function resetDataCaches(): void {
+  modePromise = null;
+  profileCache = undefined;
+  garmentsCache = null;
+  outfitsCache = null;
+}
 
 function mode(): Promise<Mode> {
   modePromise ??= detectMode();
@@ -34,9 +49,7 @@ function mode(): Promise<Mode> {
 async function detectMode(): Promise<Mode> {
   try {
     const health = await fetch("/api/health").then((r) => r.json());
-    if (!health.db) return "local";
-    await maybeMigrateLocalToCloud();
-    return "cloud";
+    return health.db ? "cloud" : "local";
   } catch {
     return "local";
   }
@@ -44,6 +57,13 @@ async function detectMode(): Promise<Mode> {
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
+  if (res.status === 401) {
+    // Session expired / not signed in — send the user to login.
+    if (typeof window !== "undefined" && location.pathname !== "/login") {
+      location.href = "/login";
+    }
+    throw new Error("unauthenticated");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `${path} failed (${res.status})`);
@@ -61,21 +81,36 @@ function putJson(body: unknown): RequestInit {
 
 /* ---------- wire <-> domain ---------- */
 
+async function blobToPayload(blob: Blob): Promise<ImagePayload> {
+  const url = hostedUrlOf.get(blob);
+  if (url) return { url }; // unchanged — server keeps the stored copy
+  return blobToBase64(blob);
+}
+
+async function payloadToBlob(p: ImagePayload): Promise<Blob> {
+  if (p.url) {
+    const blob = await fetch(p.url).then((r) => r.blob());
+    hostedUrlOf.set(blob, p.url);
+    return blob;
+  }
+  return base64ToBlob(p.data!, p.mimeType || "image/jpeg");
+}
+
 async function garmentToWire(g: Garment): Promise<GarmentWire> {
   const { image, cutout, ...rest } = g;
   return {
     ...rest,
-    image: await blobToBase64(image),
-    ...(cutout ? { cutout: await blobToBase64(cutout) } : {}),
+    image: await blobToPayload(image),
+    ...(cutout ? { cutout: await blobToPayload(cutout) } : {}),
   };
 }
 
-function wireToGarment(w: GarmentWire): Garment {
+async function wireToGarment(w: GarmentWire): Promise<Garment> {
   const { image, cutout, ...rest } = w;
   return {
     ...rest,
-    image: base64ToBlob(image.data, image.mimeType),
-    ...(cutout ? { cutout: base64ToBlob(cutout.data, cutout.mimeType) } : {}),
+    image: await payloadToBlob(image),
+    ...(cutout ? { cutout: await payloadToBlob(cutout) } : {}),
   };
 }
 
@@ -83,15 +118,15 @@ async function outfitToWire(o: Outfit): Promise<OutfitWire> {
   const { tryOn, ...rest } = o;
   return {
     ...rest,
-    ...(tryOn ? { tryOn: await blobToBase64(tryOn) } : {}),
+    ...(tryOn ? { tryOn: await blobToPayload(tryOn) } : {}),
   };
 }
 
-function wireToOutfit(w: OutfitWire): Outfit {
+async function wireToOutfit(w: OutfitWire): Promise<Outfit> {
   const { tryOn, ...rest } = w;
   return {
     ...rest,
-    ...(tryOn ? { tryOn: base64ToBlob(tryOn.data, tryOn.mimeType) } : {}),
+    ...(tryOn ? { tryOn: await payloadToBlob(tryOn) } : {}),
   };
 }
 
@@ -99,43 +134,47 @@ async function profileToWire(p: Profile): Promise<ProfileWire> {
   const { photo, ...rest } = p;
   return {
     ...rest,
-    ...(photo ? { photo: await blobToBase64(photo) } : {}),
+    ...(photo ? { photo: await blobToPayload(photo) } : {}),
   };
 }
 
-function wireToProfile(w: ProfileWire): Profile {
+async function wireToProfile(w: ProfileWire): Promise<Profile> {
   const { photo, ...rest } = w;
   return {
     ...rest,
-    ...(photo ? { photo: base64ToBlob(photo.data, photo.mimeType) } : {}),
+    ...(photo ? { photo: await payloadToBlob(photo) } : {}),
   };
 }
 
-/* ---------- one-time local → cloud migration ---------- */
+/* ---------- one-time local → cloud migration (per account) ---------- */
 
-async function maybeMigrateLocalToCloud(): Promise<void> {
+export async function migrateLocalToCloud(userId: string): Promise<void> {
+  const flag = `arshadrobe:migrated:${userId}`;
   try {
-    if (localStorage.getItem(MIGRATED_FLAG)) return;
+    if (localStorage.getItem(flag)) return;
     const [{ garments }, { profile }] = await Promise.all([
       api<{ garments: GarmentWire[] }>("/api/data/garments"),
       api<{ profile: ProfileWire | null }>("/api/data/profile"),
     ]);
-    // Only seed a brand-new, empty cloud database.
+    // Only seed a brand-new, empty cloud wardrobe.
     if (garments.length === 0 && !profile?.onboarded) {
       const [lp, lg, lo] = await Promise.all([
         local.getProfile(),
         local.listGarments(),
         local.listOutfits(),
       ]);
-      if (lp) await api("/api/data/profile", putJson(await profileToWire(lp)));
+      if (lp?.onboarded) {
+        await api("/api/data/profile", putJson(await profileToWire(lp)));
+      }
       for (const g of lg) {
         await api("/api/data/garments", putJson(await garmentToWire(g)));
       }
       for (const o of lo) {
         await api("/api/data/outfits", putJson(await outfitToWire(o)));
       }
+      resetDataCaches();
     }
-    localStorage.setItem(MIGRATED_FLAG, "1");
+    localStorage.setItem(flag, "1");
   } catch (err) {
     console.warn("Local → cloud migration skipped:", err);
   }
@@ -149,7 +188,7 @@ export async function getProfile(): Promise<Profile | null> {
   const { profile } = await api<{ profile: ProfileWire | null }>(
     "/api/data/profile"
   );
-  profileCache = profile ? wireToProfile(profile) : null;
+  profileCache = profile ? await wireToProfile(profile) : null;
   return profileCache;
 }
 
@@ -167,13 +206,21 @@ export async function listGarments(): Promise<Garment[]> {
   const { garments } = await api<{ garments: GarmentWire[] }>(
     "/api/data/garments"
   );
-  garmentsCache = garments.map(wireToGarment);
+  garmentsCache = await Promise.all(garments.map(wireToGarment));
   return garmentsCache;
 }
 
 export async function putGarment(garment: Garment): Promise<void> {
   if ((await mode()) === "local") return local.putGarment(garment);
-  await api("/api/data/garments", putJson(await garmentToWire(garment)));
+  const saved = await api<{ image?: ImagePayload; cutout?: ImagePayload }>(
+    "/api/data/garments",
+    putJson(await garmentToWire(garment))
+  );
+  // Remember where the server hosted these blobs.
+  if (saved.image?.url) hostedUrlOf.set(garment.image, saved.image.url);
+  if (saved.cutout?.url && garment.cutout) {
+    hostedUrlOf.set(garment.cutout, saved.cutout.url);
+  }
   if (garmentsCache) {
     garmentsCache = [
       garment,
@@ -196,13 +243,19 @@ export async function listOutfits(): Promise<Outfit[]> {
   if ((await mode()) === "local") return local.listOutfits();
   if (outfitsCache) return outfitsCache;
   const { outfits } = await api<{ outfits: OutfitWire[] }>("/api/data/outfits");
-  outfitsCache = outfits.map(wireToOutfit);
+  outfitsCache = await Promise.all(outfits.map(wireToOutfit));
   return outfitsCache;
 }
 
 export async function putOutfit(outfit: Outfit): Promise<void> {
   if ((await mode()) === "local") return local.putOutfit(outfit);
-  await api("/api/data/outfits", putJson(await outfitToWire(outfit)));
+  const saved = await api<{ tryOn?: ImagePayload }>(
+    "/api/data/outfits",
+    putJson(await outfitToWire(outfit))
+  );
+  if (saved.tryOn?.url && outfit.tryOn) {
+    hostedUrlOf.set(outfit.tryOn, saved.tryOn.url);
+  }
   if (outfitsCache) {
     outfitsCache = [
       outfit,
@@ -226,8 +279,5 @@ export async function clearAllData(): Promise<void> {
   if ((await mode()) === "cloud") {
     await api("/api/data/clear", { method: "POST" });
   }
-  localStorage.removeItem(MIGRATED_FLAG);
-  profileCache = undefined;
-  garmentsCache = null;
-  outfitsCache = null;
+  resetDataCaches();
 }

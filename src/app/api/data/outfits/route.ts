@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { getSessionUserId } from "@/lib/server/auth";
 import { ensureSchema, getSql, NoDbError } from "@/lib/server/db";
+import { deleteImages, storeImage } from "@/lib/server/storage";
 import type { OutfitWire } from "@/lib/wire";
 
 export const maxDuration = 60;
@@ -17,9 +19,7 @@ function rowToWire(r: any): OutfitWire {
     garmentIds: r.garment_ids ?? [],
     favorite: r.favorite,
     wornDates: (r.worn_dates ?? []).map(Number),
-    ...(r.tryon_data
-      ? { tryOn: { data: r.tryon_data, mimeType: r.tryon_mime } }
-      : {}),
+    ...(r.tryon_url ? { tryOn: { url: r.tryon_url } } : {}),
   };
 }
 
@@ -34,11 +34,21 @@ function handleError(err: unknown) {
   );
 }
 
+async function requireUser() {
+  await ensureSchema();
+  return getSessionUserId();
+}
+
 export async function GET() {
   try {
-    await ensureSchema();
+    const userId = await requireUser();
+    if (!userId) {
+      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    }
     const sql = getSql();
-    const rows = await sql`SELECT * FROM outfits ORDER BY created_at DESC`;
+    const rows = await sql`
+      SELECT * FROM outfits WHERE user_id = ${userId}
+      ORDER BY created_at DESC`;
     return NextResponse.json({ outfits: (rows as any[]).map(rowToWire) });
   } catch (err) {
     return handleError(err);
@@ -47,22 +57,33 @@ export async function GET() {
 
 export async function PUT(req: Request) {
   try {
-    await ensureSchema();
+    const userId = await requireUser();
+    if (!userId) {
+      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    }
     const o = (await req.json()) as OutfitWire;
     if (!o?.id || !o.garmentIds?.length) {
       return NextResponse.json({ error: "invalid outfit" }, { status: 400 });
     }
     const sql = getSql();
+    const prevRows = await sql`
+      SELECT tryon_url FROM outfits
+      WHERE id = ${o.id} AND user_id = ${userId}`;
+    const prev = (prevRows as any[])[0];
+
+    const tryonUrl = o.tryOn
+      ? await storeImage(o.tryOn, `outfits/${o.id}-tryon`)
+      : null;
+
     await sql`
       INSERT INTO outfits (
-        id, created_at, title, occasion, vibe, explanation, tip,
-        garment_ids, favorite, worn_dates, tryon_data, tryon_mime
+        id, user_id, created_at, title, occasion, vibe, explanation, tip,
+        garment_ids, favorite, worn_dates, tryon_url
       ) VALUES (
-        ${o.id}, ${o.createdAt}, ${o.title}, ${o.occasion}, ${o.vibe},
-        ${o.explanation}, ${o.tip ?? null},
+        ${o.id}, ${userId}, ${o.createdAt}, ${o.title}, ${o.occasion},
+        ${o.vibe}, ${o.explanation}, ${o.tip ?? null},
         ${JSON.stringify(o.garmentIds)}::jsonb, ${o.favorite},
-        ${JSON.stringify(o.wornDates)}::jsonb,
-        ${o.tryOn?.data ?? null}, ${o.tryOn?.mimeType ?? null}
+        ${JSON.stringify(o.wornDates)}::jsonb, ${tryonUrl}
       )
       ON CONFLICT (id) DO UPDATE SET
         title = EXCLUDED.title,
@@ -73,9 +94,16 @@ export async function PUT(req: Request) {
         garment_ids = EXCLUDED.garment_ids,
         favorite = EXCLUDED.favorite,
         worn_dates = EXCLUDED.worn_dates,
-        tryon_data = EXCLUDED.tryon_data,
-        tryon_mime = EXCLUDED.tryon_mime`;
-    return NextResponse.json({ ok: true });
+        tryon_url = EXCLUDED.tryon_url
+      WHERE outfits.user_id = ${userId}`;
+
+    if (prev?.tryon_url && prev.tryon_url !== tryonUrl) {
+      await deleteImages([prev.tryon_url]);
+    }
+    return NextResponse.json({
+      ok: true,
+      ...(tryonUrl ? { tryOn: { url: tryonUrl } } : {}),
+    });
   } catch (err) {
     return handleError(err);
   }
@@ -83,11 +111,18 @@ export async function PUT(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
-    await ensureSchema();
+    const userId = await requireUser();
+    if (!userId) {
+      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    }
     const id = new URL(req.url).searchParams.get("id");
     if (!id) return NextResponse.json({ error: "missing id" }, { status: 400 });
     const sql = getSql();
-    await sql`DELETE FROM outfits WHERE id = ${id}`;
+    const rows = await sql`
+      DELETE FROM outfits WHERE id = ${id} AND user_id = ${userId}
+      RETURNING tryon_url`;
+    const r = (rows as any[])[0];
+    if (r) await deleteImages([r.tryon_url]);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return handleError(err);

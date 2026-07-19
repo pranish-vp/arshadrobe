@@ -23,17 +23,34 @@ const NAV = [
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const onboarding = pathname === "/onboarding";
+  const bare = pathname === "/onboarding" || pathname === "/login";
 
-  // First run → send to onboarding.
+  // Route guard: login first (when accounts are enabled), then onboarding.
   useEffect(() => {
-    if (onboarding) return;
-    getProfile().then((p) => {
-      if (!p?.onboarded) router.replace("/onboarding");
-    });
-  }, [onboarding, router]);
+    if (bare) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const health = await fetch("/api/health").then((r) => r.json());
+        if (health.db) {
+          const me = await fetch("/api/auth/me");
+          if (me.status === 401) {
+            if (!cancelled) router.replace("/login");
+            return;
+          }
+        }
+        const profile = await getProfile();
+        if (!profile?.onboarded && !cancelled) router.replace("/onboarding");
+      } catch {
+        /* offline — let the page render */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bare, pathname, router]);
 
-  if (onboarding) return <>{children}</>;
+  if (bare) return <>{children}</>;
 
   return (
     <div className="min-h-dvh">

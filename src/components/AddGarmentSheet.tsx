@@ -50,6 +50,8 @@ export default function AddGarmentSheet({
   const inputRef = useRef<HTMLInputElement>(null);
   const removeBgRef = useRef(removeBg);
   removeBgRef.current = removeBg;
+  // Background removal runs one image at a time (single worker) — chain jobs.
+  const bgQueueRef = useRef<Promise<Blob | null>>(Promise.resolve(null));
 
   const patch = useCallback((id: string, p: Partial<DraftItem>) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...p } : it)));
@@ -63,42 +65,51 @@ export default function AddGarmentSheet({
 
   const processItem = useCallback(
     async (id: string, file: Blob) => {
-      patch(id, { status: "processing" });
+      patch(id, { status: "processing", stageLabel: "Reading this piece…" });
       try {
         const resized = await resizeToJpeg(file, 1024);
         patch(id, { original: resized, previewUrl: URL.createObjectURL(resized) });
 
-        // Auto-tag with AI (falls back to manual tags in demo mode).
-        let tags = { ...DEFAULT_TAGS };
-        let aiTagged = false;
-        try {
-          const image = await blobToBase64(resized);
-          const res = await fetch("/api/tag", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ image }),
-          });
-          if (res.ok) {
-            const json = await res.json();
-            tags = { ...DEFAULT_TAGS, ...json.tags };
-            aiTagged = true;
-          } else if (res.status === 503) {
-            setNoKey(true);
+        // Auto-tag with AI (all items tag in parallel; manual in demo mode).
+        const tagPromise = (async () => {
+          try {
+            const image = await blobToBase64(resized);
+            const res = await fetch("/api/tag", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ image }),
+            });
+            if (res.ok) {
+              const json = await res.json();
+              return {
+                tags: { ...DEFAULT_TAGS, ...json.tags } as GarmentTags,
+                aiTagged: true,
+              };
+            }
+            if (res.status === 503) setNoKey(true);
+          } catch {
+            /* offline — manual tagging */
           }
-        } catch {
-          /* offline — manual tagging */
-        }
+          return { tags: { ...DEFAULT_TAGS }, aiTagged: false };
+        })();
 
-        // In-browser background removal (in a worker; model cached after first run).
-        let cutout: Blob | undefined;
+        // Background removal joins the serial worker queue.
+        let bgPromise: Promise<Blob | null> = Promise.resolve(null);
         if (removeBgRef.current) {
-          patch(id, { stageLabel: "Removing background…" });
-          const cut = await tryRemoveBackground(resized, (label) =>
-            patch(id, { stageLabel: label })
-          );
-          if (cut) cutout = cut;
+          patch(id, { stageLabel: "Waiting for background removal…" });
+          bgPromise = bgQueueRef.current = bgQueueRef.current.then(() => {
+            patch(id, { stageLabel: "Removing background…" });
+            return tryRemoveBackground(resized, (label) =>
+              patch(id, { stageLabel: label })
+            );
+          });
         }
 
+        const [{ tags, aiTagged }, cut] = await Promise.all([
+          tagPromise,
+          bgPromise,
+        ]);
+        const cutout = cut ?? undefined;
         patch(id, {
           status: "ready",
           tags,
@@ -125,10 +136,9 @@ export default function AddGarmentSheet({
       tags: { ...DEFAULT_TAGS },
     }));
     setItems((prev) => [...prev, ...drafts]);
-    // Process sequentially to keep memory + API usage calm.
-    (async () => {
-      for (const d of drafts) await processItem(d.id, d.original);
-    })();
+    // Kick everything off at once — tagging runs in parallel, background
+    // removal drains through its queue.
+    drafts.forEach((d) => void processItem(d.id, d.original));
   };
 
   const saveAll = async () => {
@@ -152,9 +162,11 @@ export default function AddGarmentSheet({
   };
 
   const readyCount = items.filter((i) => i.status === "ready").length;
+  const errorCount = items.filter((i) => i.status === "error").length;
   const busyCount = items.filter(
     (i) => i.status === "processing" || i.status === "queued"
   ).length;
+  const doneCount = readyCount + errorCount;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 backdrop-blur-sm md:items-center">
@@ -338,7 +350,25 @@ export default function AddGarmentSheet({
         </div>
 
         {/* Footer */}
-        <div className="border-t border-sand px-5 py-4 pb-safe">
+        <div className="border-t border-sand px-5 pt-4 pb-safe-4">
+          {busyCount > 0 && (
+            <div className="mb-3">
+              <div className="mb-1.5 flex items-center justify-between text-xs font-medium text-muted">
+                <span>Processing your pieces…</span>
+                <span>
+                  {doneCount} of {items.length} done
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-sand">
+                <div
+                  className="h-full rounded-full bg-clay transition-all duration-500 ease-out"
+                  style={{
+                    width: `${Math.max(4, (doneCount / items.length) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
           <button
             type="button"
             disabled={!readyCount || busyCount > 0 || saving}

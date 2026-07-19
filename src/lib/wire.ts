@@ -6,9 +6,15 @@ import type {
   Season,
 } from "./types";
 
+/**
+ * An image crossing the client/server boundary.
+ * Uploads carry base64 `data` + `mimeType` (or `url` if the stored image is
+ * unchanged); server responses always carry the stored `url`.
+ */
 export interface ImagePayload {
-  data: string; // base64, no data: prefix
-  mimeType: string;
+  url?: string;
+  data?: string; // base64, no data: prefix
+  mimeType?: string;
 }
 
 export interface GarmentWire {

@@ -118,6 +118,11 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* Sheet/modal footers: normal padding PLUS the safe-area inset */
+.pb-safe-4 {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+}
+
 /* Checkerboard behind transparent garment cutouts */
 .cutout-bg {
   background-color: #fdfbf8;

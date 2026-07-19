@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { getSessionUserId } from "@/lib/server/auth";
 import { ensureSchema, getSql, NoDbError } from "@/lib/server/db";
+import { deleteImages, storeImage } from "@/lib/server/storage";
 import type { ProfileWire } from "@/lib/wire";
 
 export const maxDuration = 60;
@@ -18,8 +20,12 @@ function handleError(err: unknown) {
 export async function GET() {
   try {
     await ensureSchema();
+    const userId = await getSessionUserId();
+    if (!userId) {
+      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    }
     const sql = getSql();
-    const rows = await sql`SELECT * FROM profile WHERE id = 'me'`;
+    const rows = await sql`SELECT * FROM profiles WHERE user_id = ${userId}`;
     /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
     const r = (rows as any[])[0];
     if (!r) return NextResponse.json({ profile: null });
@@ -27,9 +33,7 @@ export async function GET() {
       name: r.name,
       vibes: r.vibes ?? [],
       onboarded: r.onboarded,
-      ...(r.photo_data
-        ? { photo: { data: r.photo_data, mimeType: r.photo_mime } }
-        : {}),
+      ...(r.photo_url ? { photo: { url: r.photo_url } } : {}),
     };
     return NextResponse.json({ profile });
   } catch (err) {
@@ -40,21 +44,40 @@ export async function GET() {
 export async function PUT(req: Request) {
   try {
     await ensureSchema();
+    const userId = await getSessionUserId();
+    if (!userId) {
+      return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+    }
     const p = (await req.json()) as ProfileWire;
     const sql = getSql();
+    const prevRows = await sql`
+      SELECT photo_url FROM profiles WHERE user_id = ${userId}`;
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    const prev = (prevRows as any[])[0];
+
+    const photoUrl = p.photo
+      ? await storeImage(p.photo, `profiles/${userId}`)
+      : null;
+
     await sql`
-      INSERT INTO profile (id, name, vibes, onboarded, photo_data, photo_mime)
+      INSERT INTO profiles (user_id, name, vibes, onboarded, photo_url)
       VALUES (
-        'me', ${p.name}, ${JSON.stringify(p.vibes)}::jsonb, ${p.onboarded},
-        ${p.photo?.data ?? null}, ${p.photo?.mimeType ?? null}
+        ${userId}, ${p.name}, ${JSON.stringify(p.vibes)}::jsonb,
+        ${p.onboarded}, ${photoUrl}
       )
-      ON CONFLICT (id) DO UPDATE SET
+      ON CONFLICT (user_id) DO UPDATE SET
         name = EXCLUDED.name,
         vibes = EXCLUDED.vibes,
         onboarded = EXCLUDED.onboarded,
-        photo_data = EXCLUDED.photo_data,
-        photo_mime = EXCLUDED.photo_mime`;
-    return NextResponse.json({ ok: true });
+        photo_url = EXCLUDED.photo_url`;
+
+    if (prev?.photo_url && prev.photo_url !== photoUrl) {
+      await deleteImages([prev.photo_url]);
+    }
+    return NextResponse.json({
+      ok: true,
+      ...(photoUrl ? { photo: { url: photoUrl } } : {}),
+    });
   } catch (err) {
     return handleError(err);
   }

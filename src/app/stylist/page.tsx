@@ -14,6 +14,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import { useAlerts } from "@/components/AlertProvider";
 import { ChipGroup } from "@/components/Chips";
 import EmptyState from "@/components/EmptyState";
 import OutfitCollage from "@/components/OutfitCollage";
@@ -35,15 +36,16 @@ type Phase = "ask" | "thinking" | "results";
 
 const WEATHER_OVERRIDES = ["Hot", "Warm", "Mild", "Cool", "Cold", "Rainy"];
 
-const THINKING_LINES = [
-  "Reading your closet…",
-  "Pairing colors…",
-  "Balancing the vibe…",
-  "Checking the weather…",
-  "Final touches…",
+const THINKING_STEPS = [
+  "Reading your closet",
+  "Checking the weather",
+  "Pairing colors",
+  "Balancing the vibe",
+  "Final touches",
 ];
 
 export default function StylistPage() {
+  const { toast } = useAlerts();
   const [garments, setGarments] = useState<Garment[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -61,6 +63,10 @@ export default function StylistPage() {
   const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
 
   const [tryOnOpen, setTryOnOpen] = useState(false);
+  // Stable outfit id + latest try-on per option, so auto-save upserts one
+  // lookbook entry instead of creating duplicates on regenerate.
+  const outfitIdsRef = useRef(new Map<number, string>());
+  const tryOnRef = useRef(new Map<number, Blob>());
 
   useEffect(() => {
     Promise.all([listGarments(), getProfile()]).then(([g, p]) => {
@@ -79,6 +85,8 @@ export default function StylistPage() {
     if (!occasion || !vibe) return;
     setPhase("thinking");
     setSavedIds(new Set());
+    outfitIdsRef.current.clear();
+    tryOnRef.current.clear();
     const ctx: StylistContext = {
       occasion,
       vibe,
@@ -130,8 +138,9 @@ export default function StylistPage() {
     setSelected(0);
     setPhase(opts.length ? "results" : "ask");
     if (!opts.length) {
-      alert(
-        "Couldn't build a complete outfit — add a few more pieces (a top, a bottom and shoes go a long way)."
+      toast(
+        "Couldn't build a complete outfit — add a few more pieces (a top, a bottom and shoes go a long way).",
+        "error"
       );
     }
   };
@@ -139,8 +148,13 @@ export default function StylistPage() {
   const saveLook = async (tryOn?: Blob) => {
     const opt = options[selected];
     if (!opt) return;
+    let id = outfitIdsRef.current.get(selected);
+    if (!id) {
+      id = uid();
+      outfitIdsRef.current.set(selected, id);
+    }
     await putOutfit({
-      id: uid(),
+      id,
       createdAt: Date.now(),
       title: opt.title,
       occasion: occasion ?? "",
@@ -148,7 +162,7 @@ export default function StylistPage() {
       explanation: opt.explanation,
       tip: opt.tip,
       garmentIds: opt.garmentIds,
-      tryOn,
+      tryOn: tryOn ?? tryOnRef.current.get(selected),
       favorite: false,
       wornDates: [],
     });
@@ -287,10 +301,13 @@ export default function StylistPage() {
           person={profile.photo}
           option={options[selected]}
           garments={garments}
+          initial={tryOnRef.current.get(selected) ?? null}
           onClose={() => setTryOnOpen(false)}
-          onSave={(blob) => {
-            saveLook(blob);
-            setTryOnOpen(false);
+          onGenerated={(blob) => {
+            tryOnRef.current.set(selected, blob);
+            saveLook(blob).catch(() =>
+              toast("Couldn't save the look automatically — try again.", "error")
+            );
           }}
         />
       )}
@@ -321,23 +338,67 @@ function Question({
 }
 
 function Thinking() {
-  const [line, setLine] = useState(0);
+  const [progress, setProgress] = useState(0);
+
   useEffect(() => {
-    const t = setInterval(
-      () => setLine((l) => (l + 1) % THINKING_LINES.length),
-      1400
-    );
-    return () => clearInterval(t);
+    // The stylist API doesn't stream progress — estimate it: ease toward
+    // 95% over the typical response time; the phase change reveals results.
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      const t = (Date.now() - startedAt) / 1000;
+      setProgress(Math.min(95, Math.round(100 * (1 - Math.exp(-t / 6)))));
+    }, 250);
+    return () => clearInterval(timer);
   }, []);
+
+  // Map progress onto the checklist: each step owns an equal band.
+  const stepIndex = Math.min(
+    THINKING_STEPS.length - 1,
+    Math.floor((progress / 100) * THINKING_STEPS.length)
+  );
+
   return (
-    <div className="flex flex-col items-center py-24 text-center">
+    <div className="mx-auto flex max-w-sm flex-col items-center py-16 text-center">
       <span className="animate-float flex h-16 w-16 items-center justify-center rounded-3xl bg-clay text-white shadow-lift">
         <Sparkles size={28} />
       </span>
-      <p className="font-display mt-6 text-xl font-semibold">
-        {THINKING_LINES[line]}
+      <p className="font-display mt-6 text-2xl font-semibold">
+        Styling you… {progress}%
       </p>
-      <p className="mt-2 text-sm text-muted">Styling from your own closet</p>
+      <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-sand">
+        <div
+          className="h-full rounded-full bg-clay transition-all duration-300 ease-out"
+          style={{ width: `${Math.max(4, progress)}%` }}
+        />
+      </div>
+
+      <ul className="mt-7 w-full space-y-2.5 text-left">
+        {THINKING_STEPS.map((step, i) => (
+          <li
+            key={step}
+            className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-medium transition-all duration-500 ${
+              i < stepIndex
+                ? "border-sand bg-surface text-muted"
+                : i === stepIndex
+                  ? "border-clay/40 bg-clay-soft text-ink shadow-soft"
+                  : "border-transparent text-muted/50"
+            }`}
+          >
+            {i < stepIndex ? (
+              <Check size={16} className="shrink-0 text-sage" />
+            ) : i === stepIndex ? (
+              <Loader2 size={16} className="shrink-0 animate-spin text-clay" />
+            ) : (
+              <span className="h-4 w-4 shrink-0 rounded-full border border-sand" />
+            )}
+            {step}
+            {i === stepIndex && "…"}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-5 text-xs text-muted">
+        Building looks only from pieces you own
+      </p>
     </div>
   );
 }
@@ -426,18 +487,23 @@ function TryOnModal({
   person,
   option,
   garments,
+  initial,
   onClose,
-  onSave,
+  onGenerated,
 }: {
   person: Blob;
   option: OutfitOption;
   garments: Garment[];
+  /** Previously generated try-on for this option — shown instead of regenerating. */
+  initial: Blob | null;
   onClose: () => void;
-  onSave: (blob: Blob) => void;
+  onGenerated: (blob: Blob) => void;
 }) {
-  const [result, setResult] = useState<Blob | null>(null);
+  const [result, setResult] = useState<Blob | null>(initial);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
   const startedRef = useRef(false);
   const url = useObjectUrl(result);
 
@@ -445,6 +511,16 @@ function TryOnModal({
     setGenerating(true);
     setError(null);
     setResult(null);
+    setProgress(0);
+    setElapsed(0);
+    // The image API doesn't stream progress, so estimate: ease toward 95%
+    // over the typical generation time, then snap to 100% on arrival.
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      const t = (Date.now() - startedAt) / 1000;
+      setElapsed(Math.round(t));
+      setProgress(Math.min(95, Math.round(100 * (1 - Math.exp(-t / 14)))));
+    }, 300);
     try {
       const picked = option.garmentIds
         .map((id) => garments.find((g) => g.id === id))
@@ -473,16 +549,21 @@ function TryOnModal({
             : json.error || "Generation failed"
         );
       }
-      setResult(base64ToBlob(json.image.data, json.image.mimeType));
+      const blob = base64ToBlob(json.image.data, json.image.mimeType);
+      setResult(blob);
+      onGenerated(blob); // auto-save to lookbook + database
     } catch (e) {
       setError(e instanceof Error ? e.message : "Generation failed");
     } finally {
+      clearInterval(timer);
+      setProgress(100);
       setGenerating(false);
     }
   };
 
   useEffect(() => {
-    if (!startedRef.current) {
+    // Only auto-generate when there's no previous render to show.
+    if (!startedRef.current && !initial) {
       startedRef.current = true;
       generate();
     }
@@ -508,10 +589,21 @@ function TryOnModal({
 
         <div className="flex-1 overflow-y-auto p-5">
           {generating && (
-            <div className="flex aspect-[3/4] flex-col items-center justify-center gap-4 rounded-2xl bg-sand/50">
-              <Loader2 size={30} className="animate-spin text-clay" />
-              <p className="text-sm font-medium text-muted">
-                Dressing you up… ~10–20 seconds
+            <div className="flex aspect-[3/4] flex-col items-center justify-center gap-4 rounded-2xl bg-sand/50 px-8">
+              <Loader2 size={26} className="animate-spin text-clay" />
+              <p className="font-display text-lg font-semibold">
+                Dressing you up… {progress}%
+              </p>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-sand">
+                <div
+                  className="h-full rounded-full bg-clay transition-all duration-300 ease-out"
+                  style={{ width: `${Math.max(4, progress)}%` }}
+                />
+              </div>
+              <p className="text-xs text-muted">
+                {elapsed > 45
+                  ? "Almost there — big outfits take a little longer…"
+                  : "Usually 20–40 seconds"}
               </p>
             </div>
           )}
@@ -528,23 +620,28 @@ function TryOnModal({
             </div>
           )}
           {url && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={url}
-              alt="You wearing this outfit"
-              className="w-full rounded-2xl shadow-soft"
-            />
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={url}
+                alt="You wearing this outfit"
+                className="w-full rounded-2xl shadow-soft"
+              />
+              <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs font-medium text-sage">
+                <BookHeart size={13} /> Saved to your lookbook automatically
+              </p>
+            </>
           )}
         </div>
 
         {result && (
-          <div className="flex gap-2.5 border-t border-sand px-5 py-4 pb-safe">
+          <div className="flex gap-2.5 border-t border-sand px-5 pt-4 pb-safe-4">
             <button
               type="button"
-              onClick={() => onSave(result)}
+              onClick={onClose}
               className="flex flex-1 items-center justify-center gap-2 rounded-full bg-ink py-3 text-sm font-semibold text-cream transition-all hover:bg-black active:scale-[0.98]"
             >
-              <BookHeart size={16} /> Save look
+              <Check size={16} /> Done
             </button>
             <a
               href={url}

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Fraunces, Inter } from "next/font/google";
 import "./globals.css";
+import AlertProvider from "@/components/AlertProvider";
 import AppShell from "@/components/AppShell";
 import SWRegister from "@/components/SWRegister";
 
@@ -48,7 +49,9 @@ export default function RootLayout({
       className={`${inter.variable} ${fraunces.variable} h-full antialiased`}
     >
       <body className="min-h-full">
-        <AppShell>{children}</AppShell>
+        <AlertProvider>
+          <AppShell>{children}</AppShell>
+        </AlertProvider>
         <SWRegister />
       </body>
     </html>
