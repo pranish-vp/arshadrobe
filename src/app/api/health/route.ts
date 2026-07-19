@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
-import { hasApiKey, IMAGE_MODEL, TEXT_MODEL } from "@/lib/server/ai";
+import { activeModels, hasApiKey } from "@/lib/server/ai";
 import { hasDb } from "@/lib/server/db";
 import { storageMode } from "@/lib/server/storage";
 
 export function GET() {
+  const { provider, textModel, imageModel } = activeModels();
   return NextResponse.json({
-    provider: "openai",
+    provider,
     configured: hasApiKey(),
-    textModel: TEXT_MODEL,
-    imageModel: IMAGE_MODEL,
+    textModel,
+    imageModel,
     db: hasDb(),
     imageStorage: storageMode(),
   });

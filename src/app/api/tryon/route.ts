@@ -53,9 +53,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "no_key" }, { status: 503 });
     }
     console.error("tryon route:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "try-on failed" },
-      { status: 502 }
-    );
+    const msg = err instanceof Error ? err.message : "try-on failed";
+    // Quota exhaustion (any provider) gets its own status for a friendly UI.
+    if (/429|quota|RESOURCE_EXHAUSTED|insufficient_quota/i.test(msg)) {
+      return NextResponse.json({ error: "quota" }, { status: 429 });
+    }
+    return NextResponse.json({ error: msg }, { status: 502 });
   }
 }

@@ -565,8 +565,10 @@ function TryOnModal({
       if (!res.ok) {
         throw new Error(
           res.status === 503
-            ? "Virtual try-on needs an OpenAI API key — add OPENAI_API_KEY to .env.local and restart."
-            : json.error || "Generation failed"
+            ? "Virtual try-on needs an AI key — add GEMINI_API_KEY or OPENAI_API_KEY to your environment and restart."
+            : res.status === 429
+              ? "Today's free image quota is used up. Gemini's free limit resets daily — or enable billing on your AI provider for more generations."
+              : json.error || "Generation failed"
         );
       }
       const blob = base64ToBlob(json.image.data, json.image.mimeType);
