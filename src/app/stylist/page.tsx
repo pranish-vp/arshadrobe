@@ -59,7 +59,7 @@ export default function StylistPage() {
 
   const [options, setOptions] = useState<OutfitOption[]>([]);
   const [selected, setSelected] = useState(0);
-  const [demoMode, setDemoMode] = useState(false);
+  const [demoReason, setDemoReason] = useState<"no_key" | "error" | null>(null);
   const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
 
   const [tryOnOpen, setTryOnOpen] = useState(false);
@@ -94,7 +94,7 @@ export default function StylistPage() {
       note: note.trim() || undefined,
     };
     let opts: OutfitOption[] = [];
-    let demo = false;
+    let demo: "no_key" | "error" | null = null;
     try {
       const res = await fetch("/api/stylist", {
         method: "POST",
@@ -124,16 +124,16 @@ export default function StylistPage() {
       if (res.ok) {
         opts = (await res.json()).options;
       } else {
-        demo = true;
+        demo = res.status === 503 ? "no_key" : "error";
       }
     } catch {
-      demo = true;
+      demo = "error";
     }
     if (!opts.length) {
       opts = fallbackOutfits(garments, ctx);
-      demo = true;
+      demo = demo ?? "error";
     }
-    setDemoMode(demo);
+    setDemoReason(demo);
     setOptions(opts);
     setSelected(0);
     setPhase(opts.length ? "results" : "ask");
@@ -254,12 +254,24 @@ export default function StylistPage() {
             <ArrowLeft size={15} /> Change the brief
           </button>
 
-          {demoMode && (
+          {demoReason && (
             <p className="mb-4 rounded-xl bg-clay-soft px-4 py-3 text-xs leading-5 text-clay-deep">
-              Demo stylist (no OpenAI key detected). Add{" "}
-              <code className="font-semibold">OPENAI_API_KEY</code> to{" "}
-              <code className="font-semibold">.env.local</code> for smarter,
-              chattier outfits and virtual try-on.
+              {demoReason === "no_key" ? (
+                <>
+                  Demo stylist — no OpenAI key configured. Add{" "}
+                  <code className="font-semibold">OPENAI_API_KEY</code> to{" "}
+                  <code className="font-semibold">.env.local</code> (or your
+                  hosting provider&apos;s environment settings, then redeploy)
+                  to unlock the full AI stylist and try-on.
+                </>
+              ) : (
+                <>
+                  The AI stylist couldn&apos;t respond just now, so these are
+                  quick picks from your closet. Tap{" "}
+                  <span className="font-semibold">Shuffle</span> to try the AI
+                  again.
+                </>
+              )}
             </p>
           )}
 
